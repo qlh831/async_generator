@@ -1,6 +1,6 @@
-生成器是python里的黑魔法，本文深度探索用生成器实现基于协程的异步并发框架
+生成器是python里的黑魔法，本文深度探索生成器异步并发机制，仅import基础库如socket、selectors、collections等，从零实现一个异步并发web框架。
 
-### 什么是生成器
+## 什么是生成器
 含有`yield`语句的函数是生成器。`yield`这个词的意思有生成、生产、让步等。  
 调用了之后的生成器称为生成器对象，例如下面的`gen`
 ```python
@@ -11,13 +11,13 @@ def generator():
 gen = generator()
 ```
 
-### 生成器的基础用法
+## 生成器的基础用法
 顾名思义，生成器最常见的作用是用来生成值，每次`yield`都生成一个值给上层的调用者。  
 通过这种逐步生成值的方式，可以避免一次性将内容load到内存。
 
 生成器的基础用法主要有2种：
 
-#### 迭代
+### 迭代
 通过迭代语法逐个获取生成器yield的值
 ```python
 gen = generator()
@@ -25,7 +25,7 @@ for val in gen:
     print(val)
 ```
 
-#### next
+### next
 通过next方法获取下一个yield值
 ```python
 gen = generator()
@@ -40,9 +40,9 @@ while True:
         break
 ```
 
-### 生成器的高级用法
+## 生成器的高级用法
 
-#### send
+### send
 通过`gen.send(val)`向生成器中传递值
 ```python
 def generator():
@@ -57,7 +57,7 @@ val = gen.send(None) # val为1
 val = gen.send(9) # val为11
 ```
 
-#### throw
+### throw
 通过`gen.throw(t, v, tb)` 向生成器抛出异常
 ```python
 def generator():
@@ -79,15 +79,15 @@ val = gen.send(None) # val为1
 val = gen.throw(TypeError, "error message", None) # val为2
 ```
 
-### 生成器与并发的关系
+## 生成器与并发的关系
 上面介绍了生成器的基本用法和高级用法，了解到生成器可以被控制着一步一步执行。  
 
 那么生成器如何并发执行呢？
 
 将多个生成器对象保存在列表等容器中，每次遍历这个列表，对每个生成器对象send一次（即推动运行一次），即可达到生成器并行执行的目的。
 
-### 生成器并行调度
-#### 基本思路
+## 生成器并行调度
+### 基本思路
 将生成器保存在容器中，循环遍历整个容器，每次遍历对每个生成器对象send一次，如此循环执行，可实现多个生成器函数并行执行的目的。
 ```python
 gen_list = [] # 假设列表里有很多生成器对象
@@ -95,12 +95,12 @@ for gen in gen_list:
     gen.send(None)
 ```
 
-#### 运行状态
-在上面的代码中，我们向gen中send了None，
-实际上，除了第一次运行生成器可以send值None外，之后的send值必须为上次send返回的值（即上次send后生成器yield的值）
+### 运行状态
+在上面的代码中，我们向gen中send了None，  
+实际上，除了第一次运行生成器可以send值None外，之后的send值必须为上次send返回的值（即上次send后生成器yield的值）,  
 因此，需要一种用来保存生成器运行状态的数据结构。保存进程运行状态的数据结构叫PCB（process control block），  
-那么这里保存生成器运行状态的我们命名为GCB（generator control block）
-```
+那么在这里，保存生成器运行状态的结构，我们命名为GCB（generator control block）
+```python
 class GeneratorControlBlock(object):
     def __init__(self, gen, parent=None):
         self.id = id(gen)
@@ -109,32 +109,34 @@ class GeneratorControlBlock(object):
         self.parent = parent
         self.wait_until = 0
 ```
-该结构中包含了生成器id，生成器对象，上次yield的值（也是下次send的值）等。
+该结构中包含了生成器id，生成器对象gen，上次yield的值（也是下次send的值）val等。  
 每次将val值send到生成器对象中，再将返回结果赋值给val，因为一次一次的send被调度器分离开了，所以需要GCB来保存运行状态。
 
-#### 处理sleep
+### 处理sleep
 python中的`time.sleep`将线程挂起，等待sleep结束后重新调度。  
 生成器的调度也需要有类似的功能，如何实现呢？
 
 在上面GCB的定义中，`wait_util`字段表示在该时间到来之前，当前生成器不参与继续调度，  
 当调度器调度到该GCB时，发现当前时间小于wait_util，则跳过本次的send。
 
-#### 生成器嵌套
+### 生成器嵌套
 每个生成器被调用后成为生成器对象，生成器对象必须在调度器中被反复的send，才能一步一步的运行完生成器逻辑。  
-
 生成器内调用其它生成器，必须yield出来给调度器，然后在调度器中注册新的生成器对象，才能达到生成器嵌套调用的效果。  
-否则生成器没有被调度，里面的逻辑就不会运行。
+否则生成器没有被调度，里面的逻辑就不会运行。  
 
 yield出来的新生成器在调度器上注册的同时，调用该生成器的父级生成器需要从调度器中注销，等待子生成器运行结束后再重新注册到调度器。
 
-#### 异常处理
+### 异常处理
 调度器在生成器对象上send后，生成器里面的逻辑可能出现异常，  
-调度器应该捕获这些异常，如果该生成器没有父级，则打印堆栈错误，并从调度器上注销该生成器，
+调度器应该捕获这些异常，  
+如果该生成器没有父级，则打印堆栈错误，并从调度器上注销该生成器，    
 如果该生成器有父级，则用父生成器的throw方法将异常抛出，并注销子生成器，重新注册父生成器。
+子生成器抛出的异常，可以在父级生成器中捕获和处理。
 
-子生成器抛出的异常，可以在父级生成器中捕获。
+无论生成器内发生任何异常，都不应该影响调度器的正常调度。
 
-综上所述，调度部分实现如下：
+### 调度器代码实现
+调度器代码实现如下：
 ```python
 import time
 from collections import OrderedDict
@@ -219,11 +221,13 @@ class _GeneratorScheduler(object):
 ```
 
 ## 遇到IO怎么办
-上面一顿操作，解决了多个生成器并行运行的调度问题，生成器在yield处暂停运行，在两个yield之间同步运行，不能卡顿，更不能`time.sleep`让线程挂起。  
+上面一顿操作，解决了多个生成器并行运行的调度问题。  
+
+生成器在yield处暂停运行，在两个yield之间同步运行，不能卡顿，更不能`time.sleep`让线程挂起。  
 那么这样的并行系统里面，如果遇到了IO怎么办？
 
 一般来说，程序遇到IO会被操作系统暂时挂起，等待IO事件完成。  
-这在生成器并行调度里，和`time.sleep`一样，是不能容忍的，否则整个程序卡死。
+这种挂起，在生成器并行调度里，和`time.sleep`一样，是不能容忍的，否则整个程序卡死。
 
 这里需借助`selectors`库提供的多路服用功能，达到异步IO的目的。  
 
@@ -265,5 +269,14 @@ while True:
 - 支持异步http server
 - 支持异步http request（简易版）
 
-链接：https://github.com/qlh831/async_generator
+目录说明：  
+.  
+|-- README.md       文档  
+|-- handler.py      Http请求处理器、路由等  
+|-- log.py          日志配置  
+|-- main.py         Http服务器入口  
+|-- scheduler.py    调度器  
+|-- selector.py     异步IO、socket消息处理  
+|-- web.py          Http协议解析、封装等  
 
+链接：https://github.com/qlh831/async_generator
