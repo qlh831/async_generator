@@ -279,4 +279,10 @@ while True:
 |-- selector.py     异步IO、socket消息处理  
 |-- web.py          Http协议解析、封装等  
 
+运行环境：  
+运行环境为python3.5+，无任何第三方依赖
+
+启动方式：  
+`python3 main.py`启动server，以Http协议监听`localhost:8080`  
+
 链接：https://github.com/qlh831/async_generator

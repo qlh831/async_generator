@@ -4,11 +4,9 @@ from handler import router
 
 
 def main():
-    import random
-    port = random.randint(8000, 9000)
 
     nbio = NonBlockingIO(sched)
-    nbio.start_server("localhost", port, router)
+    nbio.start_server("localhost", 8080, router)
 
     sched.schedule_gen(nbio.select())
     sched.run_forever()
